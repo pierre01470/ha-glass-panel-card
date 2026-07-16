@@ -4,7 +4,11 @@
  * onglets, responsive reel (container queries). Aucune dependance.
  */
 
-const VERSION = '3.0.0';
+const VERSION = '4.0.0';
+
+// Largeur de base par "span". Combine a flex-grow, une ligne se remplit
+// toujours entierement : plus de trou a droite quand le compte ne tombe pas juste.
+const BASIS = { 1: 152, 2: 250, 3: 340, 4: 430, 6: 620 };
 const ICON_FB = 'mdi:help-circle-outline';
 
 class GlassPanelCard extends HTMLElement {
@@ -146,20 +150,47 @@ class GlassPanelCard extends HTMLElement {
       inner.append(bar);
     }
 
-    /* ---- grilles (une par onglet) ---- */
+    /* ---- pages (une par onglet), chacune decoupee en sections ---- */
     this._els.grids = [];
     this._els.tiles = [];
     c.tabs.forEach((tab, i) => {
-      const grid = document.createElement('div');
-      grid.className = 'grid';
-      if (i !== 0) grid.style.display = 'none';
-      (tab.tiles || []).forEach((t) => {
-        const rec = this._buildTile(t);
-        grid.append(rec.el);
-        this._els.tiles.push(rec);
+      const page = document.createElement('div');
+      page.className = 'page';
+      if (i !== 0) page.style.display = 'none';
+
+      // retro-compat : un onglet sans sections = une section unique sans titre
+      const sections = tab.sections || [{ tiles: tab.tiles || [] }];
+      sections.forEach((sec) => {
+        const box = document.createElement('div');
+        box.className = 'section';
+        if (sec.color) box.style.setProperty('--accent', sec.color);
+
+        if (sec.title) {
+          const head = document.createElement('div');
+          head.className = 'sechead';
+          if (sec.icon) head.append(this._icon(sec.icon));
+          const lbl = document.createElement('div');
+          lbl.className = 'sectitle';
+          lbl.textContent = sec.title;
+          const line = document.createElement('div');
+          line.className = 'secline';
+          head.append(lbl, line);
+          box.append(head);
+        }
+
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        (sec.tiles || []).forEach((t) => {
+          const rec = this._buildTile(t);
+          grid.append(rec.el);
+          this._els.tiles.push(rec);
+        });
+        box.append(grid);
+        page.append(box);
       });
-      inner.append(grid);
-      this._els.grids.push(grid);
+
+      inner.append(page);
+      this._els.grids.push(page);
     });
 
     /* ---- dock ---- */
@@ -197,7 +228,10 @@ class GlassPanelCard extends HTMLElement {
 
   _buildTile(t) {
     const tile = document.createElement('div');
-    tile.className = `tile span-${t.span || 1}`;
+    tile.className = 'tile';
+    const sp = Math.min(6, Math.max(1, t.span || 1));
+    tile.style.setProperty('--g', sp);
+    tile.style.setProperty('--b', `${BASIS[sp] || BASIS[1]}px`);
     if (t.color) tile.style.setProperty('--accent', t.color);
 
     const head = document.createElement('div');
@@ -498,27 +532,29 @@ const CSS = `
 .tab.active { color:#0a1628; background:#fff; border-color:#fff; box-shadow:0 3px 14px rgba(0,0,0,.28); }
 .tab.active ha-icon { color:var(--accent); }
 
-/* ---------- grille ---------- */
-.grid {
-  display:grid; gap:clamp(7px,.65cqw,10px);
-  grid-template-columns:repeat(6,minmax(0,1fr));
-  grid-auto-rows:minmax(70px,auto);
-}
-@container (max-width:1150px) { .grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
-@container (max-width:760px)  { .grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-@container (max-width:520px)  { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+/* ---------- sections ---------- */
+.page { display:flex; flex-direction:column; }
+.section { display:flex; flex-direction:column; }
+.section + .section { margin-top:clamp(14px,1.5cqw,22px); }
+.sechead { display:flex; align-items:center; gap:8px; margin:0 3px 8px; }
+.sechead ha-icon { --mdc-icon-size:13px; color:var(--accent); flex:0 0 auto;
+  filter:drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 60%, transparent)); }
+.sectitle { font:700 10px inherit; letter-spacing:1.5px; text-transform:uppercase;
+  color:rgba(242,247,255,.62); white-space:nowrap; }
+.secline { flex:1 1 auto; height:1px;
+  background:linear-gradient(90deg, rgba(255,255,255,.16), rgba(255,255,255,0)); }
 
-.span-2 { grid-column:span 2; }
-.span-3 { grid-column:span 3; }
-.span-4 { grid-column:span 4; }
-.span-6 { grid-column:span 6; }
-@container (max-width:1150px) { .span-6 { grid-column:span 4; } }
-@container (max-width:760px)  { .span-4,.span-6 { grid-column:span 3; } }
-@container (max-width:520px)  { .span-3,.span-4,.span-6 { grid-column:span 2; } }
+/* ---------- grille ----------
+   Flexbox et non CSS Grid : avec flex-grow, la derniere ligne s'etire pour
+   remplir la largeur. Une grille a colonnes fixes laissait un trou a droite
+   des que le nombre de tuiles ne tombait pas juste. */
+.grid { display:flex; flex-wrap:wrap; gap:clamp(7px,.7cqw,10px); align-content:flex-start; }
 
 .tile {
+  flex:var(--g,1) 1 var(--b,152px); min-width:0; min-height:76px;
   position:relative; display:flex; flex-direction:column; gap:6px;
-  padding:10px 11px; border-radius:15px; overflow:hidden;
+  align-items:center; text-align:center;
+  padding:11px 12px; border-radius:15px; overflow:hidden;
   background:var(--glass); border:1px solid var(--brd);
   backdrop-filter:blur(24px) saturate(150%); -webkit-backdrop-filter:blur(24px) saturate(150%);
   box-shadow:0 5px 20px rgba(0,0,0,.22);
@@ -537,21 +573,26 @@ const CSS = `
 .tile.dead { opacity:.4; }
 .tile.hero { justify-content:center; }
 
-.thead { display:flex; align-items:center; gap:6px; position:relative; z-index:1; }
+/* entete centree : icone + nom groupes au milieu, jamais colles a gauche */
+.thead { display:flex; align-items:center; justify-content:center; gap:6px;
+  width:100%; padding:0 4px; position:relative; z-index:1; }
 .ticon { --mdc-icon-size:16px; color:var(--dim); flex:0 0 auto; transition:color .16s ease; }
 .tile.on .ticon { color:var(--accent); filter:drop-shadow(0 0 6px var(--accent)); }
-.tname { font-size:11px; font-weight:600; letter-spacing:.2px; flex:1 1 auto;
+.tname { font-size:11px; font-weight:600; letter-spacing:.2px; flex:0 1 auto;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.tstate { font-size:9.5px; color:var(--dim); white-space:nowrap; }
+/* l'etat sort du flux et se pose en pastille de coin : il ne decale plus le nom */
+.tstate { position:absolute; top:8px; right:10px; z-index:2;
+  font-size:9px; color:var(--dim); white-space:nowrap; opacity:.85; }
 
 .bigval { font-size:clamp(13px,1.15cqw,16px); font-weight:400; letter-spacing:-.2px; position:relative; z-index:1;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .heroval { font-size:clamp(21px,2.2cqw,30px); font-weight:250; letter-spacing:-1px; line-height:1;
   position:relative; z-index:1; }
 .sub { font-size:10.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  position:relative; z-index:1; }
+  width:100%; position:relative; z-index:1; }
 
-.row { display:flex; align-items:center; gap:5px; margin-top:auto; position:relative; z-index:1; }
+.row { display:flex; align-items:center; justify-content:center; gap:5px;
+  width:100%; margin-top:auto; position:relative; z-index:1; }
 .row.btns { flex-wrap:wrap; }
 
 /* jauge */
