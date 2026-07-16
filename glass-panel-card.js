@@ -4,7 +4,23 @@
  * onglets, responsive reel (container queries). Aucune dependance.
  */
 
-const VERSION = '4.0.0';
+const VERSION = '4.1.0';
+
+// Etats bruts de HA -> libelle francais. Surchargeable par tuile via `translate`.
+const STATE_FR = {
+  on: 'Allumé', off: 'Éteint',
+  home: 'À la maison', not_home: 'Absent',
+  open: 'Ouvert', closed: 'Fermé', opening: 'Ouverture…', closing: 'Fermeture…',
+  playing: 'Lecture', paused: 'En pause', idle: 'Inactif', standby: 'Veille', buffering: 'Chargement…',
+  docked: 'À la base', cleaning: 'Nettoyage', returning: 'Retour à la base', error: 'Erreur',
+  charging: 'En charge', discharging: 'Décharge', not_charging: 'Pas en charge', full: 'Pleine',
+  unavailable: 'Indisponible', unknown: 'Inconnu', none: 'Aucun',
+  auto: 'Auto', heat: 'Chauffage', cool: 'Froid', fan_only: 'Ventilation', heat_cool: 'Auto',
+  // Renault / Dacia
+  not_in_charge: 'Pas en charge', charge_in_progress: 'En charge', charge_error: 'Erreur de charge',
+  waiting_for_a_planned_charge: 'Charge programmée', charge_ended: 'Charge terminée',
+  waiting_for_current_charge: 'En attente', energy_flap_opened: 'Trappe ouverte',
+};
 
 // Largeur de base par "span". Combine a flex-grow, une ligne se remplit
 // toujours entierement : plus de trou a droite quand le compte ne tombe pas juste.
@@ -374,16 +390,25 @@ class GlassPanelCard extends HTMLElement {
 
   /* ---------------- mise a jour ---------------- */
 
+  // etat brut -> libelle lisible : `translate` de la tuile, sinon dictionnaire global
+  _tr(v, cfg) {
+    if (cfg && cfg.translate && cfg.translate[v] !== undefined) return cfg.translate[v];
+    return STATE_FR[v] !== undefined ? STATE_FR[v] : v;
+  }
+
   _fmt(s, cfg) {
     if (!s) return '—';
-    let v = s.state;
-    if (!isNaN(Number(v))) {
+    const v = s.state;
+    // valeur numerique : facteur, arrondi, unite
+    if (v !== '' && !isNaN(Number(v))) {
       let n = Number(v);
       if (cfg.factor) n *= cfg.factor;
-      v = n.toFixed(cfg.decimals ?? 1);
+      const num = n.toFixed(cfg.decimals ?? 1);
+      const u = cfg.unit !== undefined ? cfg.unit : (s.attributes.unit_of_measurement || '');
+      return u ? `${num} ${u}` : `${num}`;
     }
-    const u = cfg.unit !== undefined ? cfg.unit : (s.attributes.unit_of_measurement || '');
-    return u ? `${v} ${u}` : `${v}`;
+    // etat textuel : pas d'unite a coller, on traduit
+    return this._tr(v, cfg);
   }
 
   _update() {
@@ -432,12 +457,13 @@ class GlassPanelCard extends HTMLElement {
           break;
         }
         case 'climate': {
-          t.val.textContent = cfg.state_entity ? (this._st(cfg.state_entity)?.state || '—') : s.state;
+          const src = cfg.state_entity ? this._st(cfg.state_entity) : s;
+          t.val.textContent = src ? this._tr(src.state, cfg) : '—';
           break;
         }
         case 'media': {
           t.val.textContent = s.attributes.source || s.attributes.media_title || '—';
-          t.state.textContent = s.state === 'playing' ? 'Lecture' : s.state;
+          t.state.textContent = this._tr(s.state, cfg);
           if (t.slider && document.activeElement !== t.slider) t.slider.value = Math.round((s.attributes.volume_level || 0) * 100);
           break;
         }
@@ -450,7 +476,7 @@ class GlassPanelCard extends HTMLElement {
           break;
         }
         case 'toggle': case 'script': case 'cover': {
-          t.state.textContent = ['unavailable', 'unknown'].includes(s.state) ? '—' : s.state;
+          t.state.textContent = ['unavailable', 'unknown'].includes(s.state) ? '—' : this._tr(s.state, cfg);
           break;
         }
         case 'button': {
