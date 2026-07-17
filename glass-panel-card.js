@@ -4,7 +4,7 @@
  * onglets, responsive reel (container queries). Aucune dependance.
  */
 
-const VERSION = '5.0.0';
+const VERSION = '5.1.0';
 
 // Etats bruts de HA -> libelle francais. Surchargeable par tuile via `translate`.
 const STATE_FR = {
@@ -264,6 +264,8 @@ class GlassPanelCard extends HTMLElement {
     const sp = Math.min(6, Math.max(1, t.span || 1));
     tile.style.setProperty('--g', sp);
     tile.style.setProperty('--b', `${BASIS[sp] || BASIS[1]}px`);
+    // sur telephone : les petites tuiles vont deux par ligne, les grandes gardent toute la largeur
+    tile.classList.add(sp <= 2 ? 'sm-half' : 'sm-full');
     if (t.color) tile.style.setProperty('--accent', t.color);
 
     const head = document.createElement('div');
@@ -367,9 +369,33 @@ class GlassPanelCard extends HTMLElement {
       }
       case 'weather': {
         const main = document.createElement('div'); main.className = 'wxmain';
+        // colonne exterieur
+        const co = document.createElement('div'); co.className = 'wxcol';
+        const orow = document.createElement('div'); orow.className = 'wxbig';
         const wic = this._icon('mdi:weather-partly-cloudy'); wic.className = 'wxicon';
         const tv = document.createElement('div'); tv.className = 'heroval';
-        main.append(wic, tv);
+        orow.append(wic, tv);
+        const olab = document.createElement('div'); olab.className = 'wxlab';
+        olab.textContent = t.outdoor_label || 'Extérieur';
+        co.append(orow, olab);
+        main.append(co);
+        rec.wic = wic; rec.val = tv;
+        // colonne interieur (optionnelle) : la meme tuile porte les deux temperatures
+        if (t.indoor_entity) {
+          const sep = document.createElement('div'); sep.className = 'wxsep';
+          const ci = document.createElement('div'); ci.className = 'wxcol';
+          ci.style.cursor = 'pointer';
+          ci.addEventListener('click', (e) => { e.stopPropagation(); this._more(t.indoor_entity); });
+          const irow = document.createElement('div'); irow.className = 'wxbig';
+          const iic = this._icon('mdi:home-thermometer'); iic.className = 'wxicon in';
+          const iv = document.createElement('div'); iv.className = 'heroval';
+          irow.append(iic, iv);
+          const ilab = document.createElement('div'); ilab.className = 'wxlab';
+          ilab.textContent = t.indoor_label || 'Intérieur';
+          ci.append(irow, ilab);
+          main.append(sep, ci);
+          rec.ival = iv; rec.ilab = ilab;
+        }
         tile.append(main);
         const det = document.createElement('div'); det.className = 'wxdet';
         tile.append(det);
@@ -377,7 +403,7 @@ class GlassPanelCard extends HTMLElement {
         badge.style.display = 'none';
         badge.addEventListener('click', (e) => { e.stopPropagation(); this._more(t.alert_entity); });
         tile.append(badge);
-        rec.wic = wic; rec.val = tv; rec.det = det; rec.badge = badge;
+        rec.det = det; rec.badge = badge; rec.fcAt = 0; rec.fc = null;
         break;
       }
       case 'vacuum': {
@@ -487,6 +513,26 @@ class GlassPanelCard extends HTMLElement {
     return this._tr(v, cfg);
   }
 
+  // Previsions du jour (min/max) via weather.get_forecasts. Cache 30 min.
+  async _loadForecast(t) {
+    const now = Date.now();
+    if (now - t.fcAt < 30 * 60 * 1000) return;
+    t.fcAt = now;
+    try {
+      const r = await this._hass.callWS({
+        type: 'call_service', domain: 'weather', service: 'get_forecasts',
+        service_data: { type: 'daily' },
+        target: { entity_id: t.cfg.entity },
+        return_response: true,
+      });
+      const days = (r && r.response && r.response[t.cfg.entity] && r.response[t.cfg.entity].forecast) || [];
+      t.fc = days[0] || null;
+    } catch (err) {
+      t.fc = null;
+      t.fcAt = now - 25 * 60 * 1000; // reessaie dans ~5 min
+    }
+  }
+
   // Prochains evenements d'un calendrier, via l'API REST de HA. Cache 15 min.
   async _loadCal(t) {
     const now = Date.now();
@@ -591,11 +637,24 @@ class GlassPanelCard extends HTMLElement {
           t.wic.setAttribute('icon', WX_ICON[s.state] || 'mdi:weather-partly-cloudy');
           t.val.textContent = a.temperature != null ? `${Math.round(a.temperature)}°` : '—';
           t.state.textContent = this._tr(s.state, cfg);
+          // colonne interieure : temperature + humidite du salon
+          if (t.ival) {
+            const ind = this._st(cfg.indoor_entity);
+            t.ival.textContent = ind && !isNaN(Number(ind.state)) ? `${Number(ind.state).toFixed(1)}°` : '—';
+            const h = cfg.indoor_hum ? this._st(cfg.indoor_hum) : null;
+            t.ilab.textContent = (cfg.indoor_label || 'Intérieur')
+              + (h && !isNaN(Number(h.state)) ? ` · 💧 ${Math.round(Number(h.state))} %` : '');
+          }
+          this._loadForecast(t);
           const bits = [];
-          if (a.humidity != null) bits.push(`💧 ${a.humidity} %`);
+          if (t.fc && t.fc.temperature != null) {
+            const lo = t.fc.templow != null ? ` ↓ ${Math.round(t.fc.templow)}°` : '';
+            bits.push(`↑ ${Math.round(t.fc.temperature)}°${lo}`);
+          }
           if (cfg.rain_entity) { const r = this._st(cfg.rain_entity); if (r && !isNaN(Number(r.state))) bits.push(`☔ ${Math.round(Number(r.state))} %`); }
           if (cfg.uv_entity) { const u = this._st(cfg.uv_entity); if (u && !isNaN(Number(u.state))) bits.push(`UV ${u.state}`); }
           if (a.wind_speed != null) bits.push(`💨 ${Math.round(a.wind_speed)} km/h`);
+          if (a.humidity != null) bits.push(`💧 ${a.humidity} %`);
           t.det.textContent = bits.join('   ');
           const al = cfg.alert_entity ? this._st(cfg.alert_entity) : null;
           const col = al ? VIGIL[al.state] : null;
@@ -859,13 +918,26 @@ const CSS = `
 .select option { background:#12233f; color:#fff; }
 
 /* ---------- meteo ---------- */
-.wxmain { display:flex; align-items:center; justify-content:center; gap:10px; position:relative; z-index:1; }
-.wxicon { --mdc-icon-size:34px; color:var(--accent);
+.wxmain { display:flex; align-items:stretch; justify-content:center; gap:clamp(10px,1.6cqw,22px);
+  position:relative; z-index:1; }
+.wxcol { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
+.wxbig { display:flex; align-items:center; gap:8px; }
+.wxlab { font-size:9px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:var(--dim); }
+.wxsep { width:1px; align-self:stretch;
+  background:linear-gradient(180deg, transparent, rgba(255,255,255,.22), transparent); }
+.wxicon { --mdc-icon-size:32px; color:var(--accent);
   filter:drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 45%, transparent)); }
+.wxicon.in { color:#f87171; filter:drop-shadow(0 0 8px rgba(248,113,113,.4)); }
 .wxdet { font-size:10px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  width:100%; position:relative; z-index:1; }
+  width:100%; text-align:center; position:relative; z-index:1; }
 .wxbadge { font:600 10px inherit; padding:3px 10px; border-radius:999px; cursor:pointer;
   position:relative; z-index:1; }
+
+/* ---------- telephone : deux petites tuiles par ligne ---------- */
+@container (max-width:620px) {
+  .tile.sm-half { flex-basis:calc(50% - 4px) !important; }
+  .tile.sm-full { flex-basis:100% !important; }
+}
 
 /* ---------- sante (alertes) ---------- */
 .alertbox { display:flex; flex-direction:column; gap:4px; width:100%; position:relative; z-index:1; }
