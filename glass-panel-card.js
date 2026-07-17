@@ -4,7 +4,7 @@
  * onglets, responsive reel (container queries). Aucune dependance.
  */
 
-const VERSION = '5.1.0';
+const VERSION = '5.2.0';
 
 // Etats bruts de HA -> libelle francais. Surchargeable par tuile via `translate`.
 const STATE_FR = {
@@ -432,6 +432,12 @@ class GlassPanelCard extends HTMLElement {
         rec.box = box; rec.calAt = 0;
         break;
       }
+      case 'bars': {
+        const box = document.createElement('div'); box.className = 'barbox';
+        tile.append(box);
+        rec.box = box; rec.barsAt = 0;
+        break;
+      }
       case 'cover': {
         tile.classList.add('compact');
         const row = document.createElement('div'); row.className = 'row btns';
@@ -530,6 +536,47 @@ class GlassPanelCard extends HTMLElement {
     } catch (err) {
       t.fc = null;
       t.fcAt = now - 25 * 60 * 1000; // reessaie dans ~5 min
+    }
+  }
+
+  // Barres quotidiennes depuis les statistiques long-terme de HA. Cache 30 min.
+  async _loadBars(t) {
+    const now = Date.now();
+    if (now - t.barsAt < 30 * 60 * 1000) return;
+    t.barsAt = now;
+    try {
+      const days = t.cfg.days || 14;
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - (days - 1));
+      const r = await this._hass.callWS({
+        type: 'recorder/statistics_during_period',
+        start_time: start.toISOString(),
+        period: 'day',
+        statistic_ids: [t.cfg.entity],
+        types: ['change'],
+      });
+      const rows = (r && r[t.cfg.entity]) || [];
+      const vals = rows.map((x) => ({ d: new Date(x.start), v: Math.max(0, x.change || 0) }));
+      if (!vals.length) { t.box.textContent = 'Pas encore de données'; return; }
+      const total = vals.reduce((a, b) => a + b.v, 0);
+      t.state.textContent = `${total.toFixed(1)} kWh au total`;
+      const W = 40, GAP = 8, H = 92, TOP = 14, LBL = 12;
+      const w = vals.length * (W + GAP) + GAP;
+      const max = Math.max(0.1, ...vals.map((x) => x.v));
+      let svg = `<svg viewBox="0 0 ${w} ${H}" class="barsvg" preserveAspectRatio="xMidYMid meet">`;
+      vals.forEach((x, i) => {
+        const h = (x.v / max) * (H - TOP - LBL);
+        const bx = GAP + i * (W + GAP);
+        const by = H - LBL - h;
+        svg += `<rect x="${bx}" y="${by}" width="${W}" height="${Math.max(2, h)}" rx="4" class="bar"/>`;
+        svg += `<text x="${bx + W / 2}" y="${by - 3}" class="barval">${x.v >= 10 ? Math.round(x.v) : x.v.toFixed(1)}</text>`;
+        svg += `<text x="${bx + W / 2}" y="${H - 2}" class="barday">${x.d.getDate()}</text>`;
+      });
+      svg += '</svg>';
+      t.box.innerHTML = svg;
+    } catch (err) {
+      t.barsAt = now - 25 * 60 * 1000; // reessaie dans ~5 min
     }
   }
 
@@ -716,6 +763,10 @@ class GlassPanelCard extends HTMLElement {
         }
         case 'calendar': {
           this._loadCal(t);
+          break;
+        }
+        case 'bars': {
+          this._loadBars(t);
           break;
         }
         case 'gauge': {
@@ -959,6 +1010,14 @@ const CSS = `
   min-width:64px; text-align:left; flex:0 0 auto; }
 .calsum { color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; }
 .calline.none { color:var(--dim); justify-content:center; }
+
+/* ---------- barres quotidiennes ---------- */
+.barbox { width:100%; position:relative; z-index:1; font-size:10.5px; color:var(--dim); }
+.barsvg { width:100%; height:auto; display:block; }
+.bar { fill:color-mix(in srgb, var(--accent) 45%, transparent);
+  stroke:color-mix(in srgb, var(--accent) 80%, transparent); stroke-width:1; }
+.barval { fill:var(--txt); font-size:9px; text-anchor:middle; font-weight:600; }
+.barday { fill:var(--dim); font-size:8px; text-anchor:middle; }
 
 /* ---------- sources media ---------- */
 .srcrow { gap:4px; }
