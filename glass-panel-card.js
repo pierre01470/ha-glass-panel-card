@@ -4,7 +4,7 @@
  * onglets, responsive reel (container queries). Aucune dependance.
  */
 
-const VERSION = '4.1.0';
+const VERSION = '5.0.0';
 
 // Etats bruts de HA -> libelle francais. Surchargeable par tuile via `translate`.
 const STATE_FR = {
@@ -20,7 +20,23 @@ const STATE_FR = {
   not_in_charge: 'Pas en charge', charge_in_progress: 'En charge', charge_error: 'Erreur de charge',
   waiting_for_a_planned_charge: 'Charge programmée', charge_ended: 'Charge terminée',
   waiting_for_current_charge: 'En attente', energy_flap_opened: 'Trappe ouverte',
+  // Meteo
+  sunny: 'Ensoleillé', 'clear-night': 'Nuit claire', partlycloudy: 'Éclaircies', cloudy: 'Nuageux',
+  rainy: 'Pluie', pouring: 'Fortes pluies', lightning: 'Orage', 'lightning-rainy': 'Orage',
+  snowy: 'Neige', 'snowy-rainy': 'Pluie et neige', fog: 'Brouillard', hail: 'Grêle',
+  windy: 'Vent', 'windy-variant': 'Vent', exceptional: 'Alerte',
 };
+
+const WX_ICON = {
+  'clear-night': 'mdi:weather-night', cloudy: 'mdi:weather-cloudy', fog: 'mdi:weather-fog',
+  hail: 'mdi:weather-hail', lightning: 'mdi:weather-lightning', 'lightning-rainy': 'mdi:weather-lightning-rainy',
+  partlycloudy: 'mdi:weather-partly-cloudy', pouring: 'mdi:weather-pouring', rainy: 'mdi:weather-rainy',
+  snowy: 'mdi:weather-snowy', 'snowy-rainy': 'mdi:weather-snowy-rainy', sunny: 'mdi:weather-sunny',
+  windy: 'mdi:weather-windy', 'windy-variant': 'mdi:weather-windy-variant', exceptional: 'mdi:alert-circle-outline',
+};
+
+// Vigilance Meteo-France -> couleur du bandeau
+const VIGIL = { Jaune: '#facc15', Orange: '#fb923c', Rouge: '#ef4444' };
 
 // Largeur de base par "span". Combine a flex-grow, une ligne se remplit
 // toujours entierement : plus de trou a droite quand le compte ne tombe pas juste.
@@ -324,7 +340,21 @@ class GlassPanelCard extends HTMLElement {
       case 'media': {
         const v = document.createElement('div'); v.className = 'sub';
         tile.append(v); rec.val = v;
+        // chips de sources : la liste vient de la config (labels courts), pas de source_list brute
+        if (Array.isArray(t.sources) && t.sources.length) {
+          const src = document.createElement('div'); src.className = 'row btns srcrow';
+          rec.srcbtns = [];
+          t.sources.forEach((o) => {
+            const bt = document.createElement('button'); bt.className = 'chipbtn src';
+            bt.textContent = o.label || o.source;
+            bt.addEventListener('click', (e) => { e.stopPropagation(); this._call('media_player', 'select_source', { entity_id: t.entity, source: o.source }); });
+            src.append(bt);
+            rec.srcbtns.push({ btn: bt, source: o.source });
+          });
+          tile.append(src);
+        }
         const row = document.createElement('div'); row.className = 'row';
+        const vi = this._icon('mdi:volume-high'); vi.className = 'volic';
         const sl = document.createElement('input');
         sl.type = 'range'; sl.min = 0; sl.max = 100; sl.className = 'slider';
         sl.addEventListener('change', () => this._call('media_player', 'volume_set', { entity_id: t.entity, volume_level: Number(sl.value) / 100 }));
@@ -332,7 +362,48 @@ class GlassPanelCard extends HTMLElement {
         const pp = document.createElement('button'); pp.className = 'mini';
         pp.append(this._icon('mdi:play-pause'));
         pp.addEventListener('click', (e) => { e.stopPropagation(); this._call('media_player', 'media_play_pause', { entity_id: t.entity }); });
-        row.append(sl, pp); tile.append(row); rec.slider = sl;
+        row.append(vi, sl, pp); tile.append(row); rec.slider = sl;
+        break;
+      }
+      case 'weather': {
+        const main = document.createElement('div'); main.className = 'wxmain';
+        const wic = this._icon('mdi:weather-partly-cloudy'); wic.className = 'wxicon';
+        const tv = document.createElement('div'); tv.className = 'heroval';
+        main.append(wic, tv);
+        tile.append(main);
+        const det = document.createElement('div'); det.className = 'wxdet';
+        tile.append(det);
+        const badge = document.createElement('div'); badge.className = 'wxbadge';
+        badge.style.display = 'none';
+        badge.addEventListener('click', (e) => { e.stopPropagation(); this._more(t.alert_entity); });
+        tile.append(badge);
+        rec.wic = wic; rec.val = tv; rec.det = det; rec.badge = badge;
+        break;
+      }
+      case 'vacuum': {
+        const v = document.createElement('div'); v.className = 'bigval';
+        tile.append(v); rec.val = v;
+        const row = document.createElement('div'); row.className = 'row btns';
+        [['mdi:play', 'start'], ['mdi:pause', 'pause'], ['mdi:home-import-outline', 'return_to_base']].forEach(([ic2, svc]) => {
+          const bt = document.createElement('button'); bt.className = 'mini';
+          bt.append(this._icon(ic2));
+          bt.addEventListener('click', (e) => { e.stopPropagation(); this._call('vacuum', svc, { entity_id: t.entity }); });
+          row.append(bt);
+        });
+        tile.append(row);
+        break;
+      }
+      case 'alerts': {
+        tile.classList.add('alerts');
+        const box = document.createElement('div'); box.className = 'alertbox';
+        tile.append(box);
+        rec.box = box; rec.sig = null;
+        break;
+      }
+      case 'calendar': {
+        const box = document.createElement('div'); box.className = 'calbox';
+        tile.append(box);
+        rec.box = box; rec.calAt = 0;
         break;
       }
       case 'cover': {
@@ -365,6 +436,11 @@ class GlassPanelCard extends HTMLElement {
       }
       case 'script': {
         tile.classList.add('compact', 'clickable');
+        if (t.sub_text) {
+          const v = document.createElement('div'); v.className = 'sub';
+          v.textContent = t.sub_text;
+          tile.append(v);
+        }
         tile.addEventListener('click', () => this._call('script', 'turn_on', { entity_id: t.entity }));
         break;
       }
@@ -411,6 +487,46 @@ class GlassPanelCard extends HTMLElement {
     return this._tr(v, cfg);
   }
 
+  // Prochains evenements d'un calendrier, via l'API REST de HA. Cache 15 min.
+  async _loadCal(t) {
+    const now = Date.now();
+    if (now - t.calAt < 15 * 60 * 1000) return;
+    t.calAt = now;
+    try {
+      const start = new Date();
+      const end = new Date(start.getTime() + (t.cfg.days || 7) * 86400000);
+      const evs = await this._hass.callApi('get',
+        `calendars/${t.cfg.entity}?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);
+      const list = (evs || [])
+        .map((e) => ({
+          d: new Date(e.start.dateTime || e.start.date),
+          allday: !e.start.dateTime,
+          sum: e.summary || '(sans titre)',
+        }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, t.cfg.limit || 3);
+      t.box.innerHTML = '';
+      if (!list.length) {
+        const d = document.createElement('div'); d.className = 'calline none';
+        d.textContent = 'Rien de prévu';
+        t.box.append(d);
+        return;
+      }
+      list.forEach((e) => {
+        const ln = document.createElement('div'); ln.className = 'calline';
+        const when = document.createElement('span'); when.className = 'calwhen';
+        const day = e.d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' });
+        when.textContent = e.allday ? day : `${day} ${e.d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+        const sum = document.createElement('span'); sum.className = 'calsum';
+        sum.textContent = e.sum;
+        ln.append(when, sum);
+        t.box.append(ln);
+      });
+    } catch (err) {
+      t.calAt = now - 14 * 60 * 1000; // reessaie dans ~1 min
+    }
+  }
+
   _update() {
     if (!this._built) return;
 
@@ -432,13 +548,15 @@ class GlassPanelCard extends HTMLElement {
         t.el.classList.toggle('muted', col === cfg.state_colors.__off);
       }
 
-      if (!s) {
-        t.state.textContent = 'introuvable';
-        t.el.classList.add('missing');
-        return;
+      if (cfg.type !== 'alerts') {
+        if (!s) {
+          t.state.textContent = 'introuvable';
+          t.el.classList.add('missing');
+          return;
+        }
+        t.el.classList.remove('missing');
+        t.el.classList.toggle('dead', ['unavailable', 'unknown'].includes(s.state));
       }
-      t.el.classList.remove('missing');
-      t.el.classList.toggle('dead', ['unavailable', 'unknown'].includes(s.state));
 
       switch (cfg.type) {
         case 'light': {
@@ -462,9 +580,83 @@ class GlassPanelCard extends HTMLElement {
           break;
         }
         case 'media': {
-          t.val.textContent = s.attributes.source || s.attributes.media_title || '—';
+          t.val.textContent = s.attributes.media_title || s.attributes.source || '—';
           t.state.textContent = this._tr(s.state, cfg);
           if (t.slider && document.activeElement !== t.slider) t.slider.value = Math.round((s.attributes.volume_level || 0) * 100);
+          if (t.srcbtns) t.srcbtns.forEach((o) => o.btn.classList.toggle('active', s.attributes.source === o.source));
+          break;
+        }
+        case 'weather': {
+          const a = s.attributes;
+          t.wic.setAttribute('icon', WX_ICON[s.state] || 'mdi:weather-partly-cloudy');
+          t.val.textContent = a.temperature != null ? `${Math.round(a.temperature)}°` : '—';
+          t.state.textContent = this._tr(s.state, cfg);
+          const bits = [];
+          if (a.humidity != null) bits.push(`💧 ${a.humidity} %`);
+          if (cfg.rain_entity) { const r = this._st(cfg.rain_entity); if (r && !isNaN(Number(r.state))) bits.push(`☔ ${Math.round(Number(r.state))} %`); }
+          if (cfg.uv_entity) { const u = this._st(cfg.uv_entity); if (u && !isNaN(Number(u.state))) bits.push(`UV ${u.state}`); }
+          if (a.wind_speed != null) bits.push(`💨 ${Math.round(a.wind_speed)} km/h`);
+          t.det.textContent = bits.join('   ');
+          const al = cfg.alert_entity ? this._st(cfg.alert_entity) : null;
+          const col = al ? VIGIL[al.state] : null;
+          if (col) {
+            t.badge.style.display = '';
+            t.badge.textContent = `⚠ Vigilance ${al.state}`;
+            t.badge.style.background = `color-mix(in srgb, ${col} 20%, transparent)`;
+            t.badge.style.border = `1px solid color-mix(in srgb, ${col} 55%, transparent)`;
+            t.badge.style.color = col;
+          } else {
+            t.badge.style.display = 'none';
+          }
+          break;
+        }
+        case 'vacuum': {
+          const b = cfg.battery_entity ? this._st(cfg.battery_entity) : null;
+          const batt = b && !isNaN(Number(b.state)) ? ` · ${Math.round(Number(b.state))} %` : '';
+          t.val.textContent = this._tr(s.state, cfg) + batt;
+          break;
+        }
+        case 'alerts': {
+          const items = [];
+          (cfg.rules || []).forEach((r) => {
+            const e = this._st(r.entity);
+            const val = e ? e.state : null;
+            const dead = !e || ['unavailable', 'unknown'].includes(val);
+            const num = !dead && val !== '' && !isNaN(Number(val)) ? Number(val) : null;
+            let hit = false;
+            if (dead) hit = !!r.on_unavailable;
+            else if (r.below !== undefined && num !== null) hit = num < r.below;
+            else if (r.above !== undefined && num !== null) hit = num > r.above;
+            else if (r.equals !== undefined) hit = val === r.equals;
+            else if (r.not_equals !== undefined) hit = val !== r.not_equals;
+            if (hit) items.push({ ...r, val: dead ? 'indisponible' : this._fmt(e, r) });
+          });
+          const sig = items.map((i) => i.name + i.val).join('|');
+          if (sig === t.sig) break;
+          t.sig = sig;
+          t.box.innerHTML = '';
+          t.el.classList.toggle('haswarn', items.length > 0);
+          if (!items.length) {
+            const ok = document.createElement('div'); ok.className = 'alertline ok';
+            ok.append(this._icon('mdi:check-circle'));
+            const sp = document.createElement('span'); sp.textContent = 'Tout est en ordre';
+            ok.append(sp);
+            t.box.append(ok);
+          } else {
+            items.forEach((i) => {
+              const ln = document.createElement('div'); ln.className = 'alertline ' + (i.severity || 'warn');
+              ln.append(this._icon(i.icon || 'mdi:alert'));
+              const sp = document.createElement('span'); sp.textContent = i.name;
+              const vv = document.createElement('b'); vv.textContent = i.val;
+              ln.append(sp, vv);
+              ln.addEventListener('click', () => this._more(i.entity));
+              t.box.append(ln);
+            });
+          }
+          break;
+        }
+        case 'calendar': {
+          this._loadCal(t);
           break;
         }
         case 'gauge': {
@@ -475,7 +667,12 @@ class GlassPanelCard extends HTMLElement {
           t.val.textContent = this._fmt(s, cfg);
           break;
         }
-        case 'toggle': case 'script': case 'cover': {
+        case 'script': {
+          // un bouton d'action n'affiche pas "Eteint" : rien au repos, "En cours" si actif
+          t.state.textContent = s.state === 'on' ? 'En cours…' : '';
+          break;
+        }
+        case 'toggle': case 'cover': {
           t.state.textContent = ['unavailable', 'unknown'].includes(s.state) ? '—' : this._tr(s.state, cfg);
           break;
         }
@@ -660,6 +857,47 @@ const CSS = `
   font:500 11.5px inherit; outline:none; position:relative; z-index:1;
 }
 .select option { background:#12233f; color:#fff; }
+
+/* ---------- meteo ---------- */
+.wxmain { display:flex; align-items:center; justify-content:center; gap:10px; position:relative; z-index:1; }
+.wxicon { --mdc-icon-size:34px; color:var(--accent);
+  filter:drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 45%, transparent)); }
+.wxdet { font-size:10px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  width:100%; position:relative; z-index:1; }
+.wxbadge { font:600 10px inherit; padding:3px 10px; border-radius:999px; cursor:pointer;
+  position:relative; z-index:1; }
+
+/* ---------- sante (alertes) ---------- */
+.alertbox { display:flex; flex-direction:column; gap:4px; width:100%; position:relative; z-index:1; }
+.alertline { display:flex; align-items:center; gap:7px; padding:4px 9px; border-radius:9px;
+  font-size:11px; cursor:pointer; background:rgba(255,255,255,.05); }
+.alertline ha-icon { --mdc-icon-size:14px; flex:0 0 auto; }
+.alertline span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.alertline b { margin-left:auto; font-weight:600; font-size:10.5px; white-space:nowrap; }
+.alertline.warn { color:#fde68a; } .alertline.warn ha-icon { color:#fbbf24; }
+.alertline.crit { color:#fecaca; } .alertline.crit ha-icon { color:#f87171; }
+.alertline.ok { color:#bbf7d0; cursor:default; background:transparent; justify-content:center; }
+.alertline.ok ha-icon { color:#4ade80; }
+.tile.haswarn { border-color:color-mix(in srgb, #fbbf24 45%, transparent); }
+
+/* ---------- agenda ---------- */
+.calbox { display:flex; flex-direction:column; gap:4px; width:100%; position:relative; z-index:1; }
+.calline { display:flex; align-items:baseline; gap:8px; font-size:11px; padding:2px 4px; }
+.calwhen { color:var(--accent); font-weight:600; font-size:10px; white-space:nowrap;
+  min-width:64px; text-align:left; flex:0 0 auto; }
+.calsum { color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; }
+.calline.none { color:var(--dim); justify-content:center; }
+
+/* ---------- sources media ---------- */
+.srcrow { gap:4px; }
+.chipbtn.src { height:24px; padding:0 9px; font-size:10px; }
+.tile.on .chipbtn.src { background:rgba(255,255,255,.10); border-color:var(--brd); }
+.chipbtn.src.active, .tile.on .chipbtn.src.active {
+  background:color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color:color-mix(in srgb, var(--accent) 65%, transparent);
+  color:var(--accent); font-weight:700;
+}
+.volic { --mdc-icon-size:14px; color:var(--dim); flex:0 0 auto; }
 
 /* ---------- dock ---------- */
 .dock { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:clamp(10px,1.2cqw,16px); }
